@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2008 The Android Open Source Project
- * Copyright (C) 2012 Freescale Semiconductor, Inc.
+ * Copyright (C) 2013 The CyanogenMod Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,18 +14,17 @@
  * limitations under the License.
  */
 
-#ifndef _NTFS_H
-#define _NTFS_H
+#ifndef _EXFAT_H
+#define _EXFAT_H
 
 #include <unistd.h>
 
-class Ntfs {
+class Exfat {
 public:
+    static int doMount(const char *fsPath, const char *mountPoint, bool ro, bool remount,
+            bool executable, int ownerUid, int ownerGid, int permMask);
     static int check(const char *fsPath);
-    static int doMount(const char *fsPath, const char *mountPoint,
-                       bool ro, bool remount, bool executable,
-                       int ownerUid, int ownerGid, int permMask,
-                       bool createLost);
+    static int format(const char *fsPath);
 };
 
 #endif
