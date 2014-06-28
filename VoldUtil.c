@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012 The Android Open Source Project
+ * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,17 +14,16 @@
  * limitations under the License.
  */
 
-#ifndef _EXT4_H
-#define _EXT4_H
+#include <sys/ioctl.h>
+#include <linux/fs.h>
 
-#include <unistd.h>
+unsigned int get_blkdev_size(int fd)
+{
+  unsigned int nr_sec;
 
-class Ext4 {
-public:
-    static int doMount(const char *fsPath, const char *mountPoint, bool ro, bool remount,
-            bool executable, bool sdcard, const char *mountOpts = NULL);
-    static int check(const char *fsPath);
-    static int format(const char *fsPath, const char *mountpoint);
-};
+  if ( (ioctl(fd, BLKGETSIZE, &nr_sec)) == -1) {
+    nr_sec = 0;
+  }
 
-#endif
+  return nr_sec;
+}

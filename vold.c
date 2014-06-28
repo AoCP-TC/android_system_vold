@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 The Android-x86 Open Source Project
+ * Copyright (C) 2013 The CyanogenMod Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,22 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef _AUTOVOLUME_H
-#define _AUTOVOLUME_H
+#include "vold.h"
 
-#include "DirectVolume.h"
-
-
-class AutoVolume : public DirectVolume {
-public:
-    AutoVolume(VolumeManager *vm, const char *label, const char *mount_point, const char *part_name = 0);
-    virtual ~AutoVolume();
-
-protected:
-    int handleBlockEvent(NetlinkEvent *evt);
-
-private:
-    char *mSdcard;
-};
-
-#endif
+int main(int argc, char **argv) {
+    return vold_main();
+}

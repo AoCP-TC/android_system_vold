@@ -22,7 +22,11 @@
 #include "Volume.h"
 
 #ifndef VOLD_MAX_PARTITIONS
-#define VOLD_MAX_PARTITIONS 4
+#define VOLD_MAX_PARTITIONS 32
+#endif
+
+#if defined(VOLD_DISC_HAS_MULTIPLE_MAJORS) && !defined(VOLD_INTERNAL_VOLUME)
+#define VOLD_INTERNAL_VOLUME "sdcard0"
 #endif
 
 typedef android::List<char *> PathCollection;
@@ -30,8 +34,10 @@ typedef android::List<char *> PathCollection;
 class DirectVolume : public Volume {
 public:
     static const int MAX_PARTITIONS = VOLD_MAX_PARTITIONS;
-
 protected:
+    const char* mMountpoint;
+    const char* mFuseMountpoint;
+
     PathCollection *mPaths;
     int            mDiskMajor;
     int            mDiskMinor;
@@ -40,9 +46,8 @@ protected:
     int            mOrigDiskMinor;
     int            mOrigPartMinors[MAX_PARTITIONS];
     int            mDiskNumParts;
-    unsigned char  mPendingPartMap;
+    unsigned int   mPendingPartMap;
     int            mIsDecrypted;
-    int            mFlags;
 
 #ifdef VOLD_DISC_HAS_MULTIPLE_MAJORS
 private:
@@ -55,10 +60,13 @@ private:
 #endif
 
 public:
-    DirectVolume(VolumeManager *vm, const char *label, const char *mount_point, int partIdx);
+    DirectVolume(VolumeManager *vm, const fstab_rec* rec, int flags);
     virtual ~DirectVolume();
 
     int addPath(const char *path);
+
+    const char *getMountpoint() { return mMountpoint; }
+    const char *getFuseMountpoint() { return mFuseMountpoint; }
 
     int handleBlockEvent(NetlinkEvent *evt);
     dev_t getDiskDevice();
@@ -66,14 +74,12 @@ public:
     void handleVolumeShared();
     void handleVolumeUnshared();
     int getVolInfo(struct volume_info *v);
-    void setFlags(int flags);
 
 protected:
     int getDeviceNodes(dev_t *devs, int max);
     int updateDeviceInfo(char *new_path, int new_major, int new_minor);
     virtual void revertDeviceInfo(void);
     int isDecrypted() { return mIsDecrypted; }
-    int getFlags() { return mFlags; }
 
 private:
     void handleDiskAdded(const char *devpath, NetlinkEvent *evt);

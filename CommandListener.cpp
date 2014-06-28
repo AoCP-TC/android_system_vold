@@ -34,10 +34,14 @@
 #include "VolumeManager.h"
 #include "ResponseCode.h"
 #include "Process.h"
-#include "Xwarp.h"
 #include "Loop.h"
 #include "Devmapper.h"
 #include "cryptfs.h"
+
+#ifndef MINIVOLD
+#include "fstrim.h"
+#include "Xwarp.h"
+#endif
 
 #define DUMP_ARGS 0
 
@@ -45,11 +49,15 @@ CommandListener::CommandListener() :
                  FrameworkListener("vold", true) {
     registerCmd(new DumpCmd());
     registerCmd(new VolumeCmd());
+    registerCmd(new StorageCmd());
+    registerCmd(new CryptfsCmd());
+
+#ifndef MINIVOLD
     registerCmd(new AsecCmd());
     registerCmd(new ObbCmd());
-    registerCmd(new StorageCmd());
     registerCmd(new XwarpCmd());
-    registerCmd(new CryptfsCmd());
+    registerCmd(new FstrimCmd());
+#endif
 }
 
 void CommandListener::dumpArgs(int argc, char **argv, int argObscure) {
@@ -160,11 +168,20 @@ int CommandListener::VolumeCmd::runCommand(SocketClient *cli,
         }
         rc = vm->unmountVolume(argv[2], force, revert);
     } else if (!strcmp(argv[1], "format")) {
-        if (argc != 3) {
-            cli->sendMsg(ResponseCode::CommandSyntaxError, "Usage: volume format <path>", false);
+        if (argc < 3 || argc > 5 ||
+            (argc == 5 && strcmp(argv[4], "wipe") != 0)) {
+            cli->sendMsg(ResponseCode::CommandSyntaxError, "Usage: volume format <path> [fstype] [wipe]", false);
             return 0;
         }
-        rc = vm->formatVolume(argv[2]);
+        bool wipe = false;
+        if (strcmp(argv[argc - 1], "wipe") == 0) {
+            wipe = true;
+        }
+        if (argc == 3 || (argc == 4 && wipe)) {
+            rc = vm->formatVolume(argv[2], wipe);
+        } else {
+            rc = vm->formatVolume(argv[2], wipe, argv[3]);
+        }
     } else if (!strcmp(argv[1], "share")) {
         if (argc != 4) {
             cli->sendMsg(ResponseCode::CommandSyntaxError,
@@ -195,6 +212,12 @@ int CommandListener::VolumeCmd::runCommand(SocketClient *cli,
                     (enabled ? "Share enabled" : "Share disabled"), false);
         }
         return 0;
+    } else if (!strcmp(argv[1], "mkdirs")) {
+        if (argc != 3) {
+            cli->sendMsg(ResponseCode::CommandSyntaxError, "Usage: volume mkdirs <path>", false);
+            return 0;
+        }
+        rc = vm->mkdirs(argv[2]);
     } else {
         cli->sendMsg(ResponseCode::CommandSyntaxError, "Unknown volume cmd", false);
     }
@@ -202,7 +225,6 @@ int CommandListener::VolumeCmd::runCommand(SocketClient *cli,
     if (!rc) {
         cli->sendMsg(ResponseCode::CommandOkay, "volume operation succeeded", false);
     } else {
-        int erno = errno;
         rc = ResponseCode::convertFromErrno();
         cli->sendMsg(rc, "volume operation failed", true);
     }
@@ -227,6 +249,10 @@ int CommandListener::StorageCmd::runCommand(SocketClient *cli,
         DIR *dir;
         struct dirent *de;
 
+        if (argc < 3) {
+            cli->sendMsg(ResponseCode::CommandSyntaxError, "Missing Argument: user <mountpoint>", false);
+            return 0;
+        }
         if (!(dir = opendir("/proc"))) {
             cli->sendMsg(ResponseCode::OperationFailed, "Failed to open /proc", true);
             return 0;
@@ -261,6 +287,7 @@ int CommandListener::StorageCmd::runCommand(SocketClient *cli,
     return 0;
 }
 
+#ifndef MINIVOLD
 CommandListener::AsecCmd::AsecCmd() :
                  VoldCommand("asec") {
 }
@@ -274,7 +301,7 @@ void CommandListener::AsecCmd::listAsecsInDirectory(SocketClient *cli, const cha
     }
 
     size_t dirent_len = offsetof(struct dirent, d_name) +
-            pathconf(directory, _PC_NAME_MAX) + 1;
+            fpathconf(dirfd(d), _PC_NAME_MAX) + 1;
 
     struct dirent *dent = (struct dirent *) malloc(dirent_len);
     if (dent == NULL) {
@@ -535,6 +562,7 @@ int CommandListener::XwarpCmd::runCommand(SocketClient *cli,
 
     return 0;
 }
+#endif
 
 CommandListener::CryptfsCmd::CryptfsCmd() :
                  VoldCommand("cryptfs") {
@@ -596,6 +624,25 @@ int CommandListener::CryptfsCmd::runCommand(SocketClient *cli,
         }
         SLOGD("cryptfs verifypw {}");
         rc = cryptfs_verify_passwd(argv[2]);
+    } else if (!strcmp(argv[1], "getfield")) {
+        char valbuf[PROPERTY_VALUE_MAX];
+
+        if (argc != 3) {
+            cli->sendMsg(ResponseCode::CommandSyntaxError, "Usage: cryptfs getfield <fieldname>", false);
+            return 0;
+        }
+        dumpArgs(argc, argv, -1);
+        rc = cryptfs_getfield(argv[2], valbuf, sizeof(valbuf));
+        if (rc == 0) {
+            cli->sendMsg(ResponseCode::CryptfsGetfieldResult, valbuf, false);
+        }
+    } else if (!strcmp(argv[1], "setfield")) {
+        if (argc != 4) {
+            cli->sendMsg(ResponseCode::CommandSyntaxError, "Usage: cryptfs setfield <fieldname> <value>", false);
+            return 0;
+        }
+        dumpArgs(argc, argv, -1);
+        rc = cryptfs_setfield(argv[2], argv[3]);
     } else {
         dumpArgs(argc, argv, -1);
         cli->sendMsg(ResponseCode::CommandSyntaxError, "Unknown cryptfs cmd", false);
@@ -609,3 +656,43 @@ int CommandListener::CryptfsCmd::runCommand(SocketClient *cli,
 
     return 0;
 }
+
+#ifndef MINIVOLD
+CommandListener::FstrimCmd::FstrimCmd() :
+                 VoldCommand("fstrim") {
+}
+int CommandListener::FstrimCmd::runCommand(SocketClient *cli,
+                                                      int argc, char **argv) {
+    if ((cli->getUid() != 0) && (cli->getUid() != AID_SYSTEM)) {
+        cli->sendMsg(ResponseCode::CommandNoPermission, "No permission to run fstrim commands", false);
+        return 0;
+    }
+
+    if (argc < 2) {
+        cli->sendMsg(ResponseCode::CommandSyntaxError, "Missing Argument", false);
+        return 0;
+    }
+
+    int rc = 0;
+
+    if (!strcmp(argv[1], "dotrim")) {
+        if (argc != 2) {
+            cli->sendMsg(ResponseCode::CommandSyntaxError, "Usage: fstrim dotrim", false);
+            return 0;
+        }
+        dumpArgs(argc, argv, -1);
+        rc = fstrim_filesystems();
+    } else {
+        dumpArgs(argc, argv, -1);
+        cli->sendMsg(ResponseCode::CommandSyntaxError, "Unknown fstrim cmd", false);
+    }
+
+    // Always report that the command succeeded and return the error code.
+    // The caller will check the return value to see what the error was.
+    char msg[255];
+    snprintf(msg, sizeof(msg), "%d", rc);
+    cli->sendMsg(ResponseCode::CommandOkay, msg, false);
+
+    return 0;
+}
+#endif

@@ -33,11 +33,8 @@
 
 //#define PARTITION_DEBUG
 
-DirectVolume::DirectVolume(VolumeManager *vm, const char *label,
-                           const char *mount_point, int partIdx) :
-              Volume(vm, label, mount_point) {
-    mPartIdx = partIdx;
-
+DirectVolume::DirectVolume(VolumeManager *vm, const fstab_rec* rec, int flags) :
+        Volume(vm, rec, flags) {
     mPaths = new PathCollection();
     for (int i = 0; i < MAX_PARTITIONS; i++)
         mPartMinors[i] = -1;
@@ -45,6 +42,27 @@ DirectVolume::DirectVolume(VolumeManager *vm, const char *label,
     mDiskMajor = -1;
     mDiskMinor = -1;
     mDiskNumParts = 0;
+    mIsDecrypted = 0;
+    mOrigDiskMajor = -1;
+    mOrigDiskMinor = -1;
+
+    if (strcmp(rec->mount_point, "auto") != 0) {
+        ALOGE("Vold managed volumes must have auto mount point; ignoring %s",
+              rec->mount_point);
+    }
+
+    char mount[PATH_MAX];
+
+#ifdef MINIVOLD
+    // In recovery, directly mount to /storage/* since we have no fuse daemon
+    snprintf(mount, PATH_MAX, "%s/%s", Volume::FUSE_DIR, rec->label);
+    mMountpoint = mFuseMountpoint = strdup(mount);
+#else
+    snprintf(mount, PATH_MAX, "%s/%s", Volume::MEDIA_DIR, rec->label);
+    mMountpoint = strdup(mount);
+    snprintf(mount, PATH_MAX, "%s/%s", Volume::FUSE_DIR, rec->label);
+    mFuseMountpoint = strdup(mount);
+#endif
 
     setState(Volume::State_NoMedia);
 }
@@ -60,10 +78,6 @@ DirectVolume::~DirectVolume() {
 int DirectVolume::addPath(const char *path) {
     mPaths->push_back(strdup(path));
     return 0;
-}
-
-void DirectVolume::setFlags(int flags) {
-    mFlags = flags;
 }
 
 dev_t DirectVolume::getDiskDevice() {
@@ -127,7 +141,7 @@ int DirectVolume::handleBlockEvent(NetlinkEvent *evt) {
 
                     snprintf(msg, sizeof(msg),
                              "Volume %s %s disk inserted (%d:%d)", getLabel(),
-                             getMountpoint(), mDiskMajor, mDiskMinor);
+                             getFuseMountpoint(), mDiskMajor, mDiskMinor);
                     mVm->getBroadcaster()->sendBroadcast(ResponseCode::VolumeDiskInserted,
                                                          msg, false);
                 }
@@ -177,7 +191,9 @@ void DirectVolume::handleDiskAdded(const char *devpath, NetlinkEvent *evt) {
 #ifdef PARTITION_DEBUG
         SLOGD("Dv::diskIns - No partitions - good to go son!");
 #endif
-        setState(Volume::State_Idle);
+        // Do not leave idle state if already in (avoids warnings)
+        if (getState() != Volume::State_Idle)
+            setState(Volume::State_Idle);
     } else {
 #ifdef PARTITION_DEBUG
         SLOGD("Dv::diskIns - waiting for %d partitions (mask 0x%x)",
@@ -214,13 +230,16 @@ void DirectVolume::handlePartitionAdded(const char *devpath, NetlinkEvent *evt) 
     }
 
     if (major != mDiskMajor) {
-        SLOGE("Partition '%s' has a different major than its disk!", devpath);
 #ifdef VOLD_DISC_HAS_MULTIPLE_MAJORS
         ValuePair vp;
         vp.major = major;
         vp.part_num = part_num;
         badPartitions.push_back(vp);
-#else
+        // Errors with internal volume are expected, so do not show them
+        if(strcmp(getLabel(), VOLD_INTERNAL_VOLUME))
+#endif
+        SLOGE("Partition '%s' of '%s' has a different major than its disk!", devpath, getLabel());
+#ifndef VOLD_DISC_HAS_MULTIPLE_MAJORS
         return;
 #endif
     }
@@ -303,7 +322,7 @@ void DirectVolume::handleDiskRemoved(const char *devpath, NetlinkEvent *evt) {
 
     SLOGD("Volume %s %s disk %d:%d removed\n", getLabel(), getMountpoint(), major, minor);
     snprintf(msg, sizeof(msg), "Volume %s %s disk removed (%d:%d)",
-             getLabel(), getMountpoint(), major, minor);
+             getLabel(), getFuseMountpoint(), major, minor);
     mVm->getBroadcaster()->sendBroadcast(ResponseCode::VolumeDiskRemoved,
                                              msg, false);
     setState(Volume::State_NoMedia);
@@ -333,14 +352,15 @@ void DirectVolume::handlePartitionRemoved(const char *devpath, NetlinkEvent *evt
          * Yikes, our mounted partition is going away!
          */
 
-        snprintf(msg, sizeof(msg), "Volume %s %s bad removal (%d:%d)",
-                 getLabel(), getMountpoint(), major, minor);
-        mVm->getBroadcaster()->sendBroadcast(ResponseCode::VolumeBadRemoval,
-                                             msg, false);
-
-	if (mVm->cleanupAsec(this, true)) {
+        bool providesAsec = (getFlags() & VOL_PROVIDES_ASEC) != 0;
+        if (providesAsec && mVm->cleanupAsec(this, true)) {
             SLOGE("Failed to cleanup ASEC - unmount will probably fail!");
         }
+
+        snprintf(msg, sizeof(msg), "Volume %s %s bad removal (%d:%d)",
+                 getLabel(), getFuseMountpoint(), major, minor);
+        mVm->getBroadcaster()->sendBroadcast(ResponseCode::VolumeBadRemoval,
+                                             msg, false);
 
         if (Volume::unmountVol(true, false)) {
             SLOGE("Failed to unmount volume on bad removal (%s)", 
@@ -509,7 +529,7 @@ int DirectVolume::getVolInfo(struct volume_info *v)
 {
     strcpy(v->label, mLabel);
     strcpy(v->mnt_point, mMountpoint);
-    v->flags=mFlags;
+    v->flags = getFlags();
     /* Other fields of struct volume_info are filled in by the caller or cryptfs.c */
 
     return 0;

@@ -26,7 +26,10 @@ public:
                        bool ro, bool remount, bool executable,
                        int ownerUid, int ownerGid, int permMask,
                        bool createLost);
-    static int format(const char *fsPath, unsigned int numSectors);
+    static int format(const char *fsPath, unsigned int numSectors, bool wipe);
+
+private:
+    static void wipe(const char *fsPath, unsigned int numSectors);
 };
 
 #endif

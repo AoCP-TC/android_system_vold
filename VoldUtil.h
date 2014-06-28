@@ -14,17 +14,19 @@
  * limitations under the License.
  */
 
-#ifndef _EXT4_H
-#define _EXT4_H
+#ifndef _VOLDUTIL_H
+#define _VOLDUTIL_H
 
-#include <unistd.h>
+#include <sys/cdefs.h>
 
-class Ext4 {
-public:
-    static int doMount(const char *fsPath, const char *mountPoint, bool ro, bool remount,
-            bool executable, bool sdcard, const char *mountOpts = NULL);
-    static int check(const char *fsPath);
-    static int format(const char *fsPath, const char *mountpoint);
-};
+#ifndef HELPER_PATH
+#define HELPER_PATH "/system/bin/"
+#endif
+
+#define ARRAY_SIZE(a) (sizeof(a) / sizeof(*(a)))
+
+__BEGIN_DECLS
+  unsigned int get_blkdev_size(int fd);
+__END_DECLS
 
 #endif

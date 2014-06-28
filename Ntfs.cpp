@@ -33,6 +33,8 @@
 
 #include <linux/kdev_t.h>
 #include <linux/fs.h>
+#include <logwrap/logwrap.h>
+#include "VoldUtil.h"
 
 #define LOG_TAG "Vold"
 
@@ -40,10 +42,11 @@
 #include <cutils/properties.h>
 
 #include "Ntfs.h"
+#include "VoldUtil.h"
 
-static char NTFS_FIX_PATH[] = "/system/bin/ntfsfix";
-static char NTFS_MOUNT_PATH[] = "/system/bin/ntfs-3g";
-extern "C" int logwrap(int argc, const char **argv, int background);
+static char NTFS_FIX_PATH[] = HELPER_PATH "ntfsfix";
+static char NTFS_MOUNT_PATH[] = HELPER_PATH "ntfs-3g";
+static char MKNTFS_PATH[] = HELPER_PATH "mkntfs";
 
 int Ntfs::check(const char *fsPath) {
 
@@ -53,6 +56,7 @@ int Ntfs::check(const char *fsPath) {
     }
 
     int rc = 0;
+    int status;
     const char *args[4];
     /* we first use -n to do ntfs detection */
     args[0] = NTFS_FIX_PATH;
@@ -60,7 +64,8 @@ int Ntfs::check(const char *fsPath) {
     args[2] = fsPath;
     args[3] = NULL;
 
-    rc = logwrap(3, args, 1);
+    rc = android_fork_execvp(ARRAY_SIZE(args), (char **)args, &status, false,
+            true);
     if (rc) {
         errno = ENODATA;
         return -1;
@@ -73,7 +78,8 @@ int Ntfs::check(const char *fsPath) {
     args[1] = fsPath;
     args[2] = NULL;
 
-    rc = logwrap(2, args, 1);
+    rc = android_fork_execvp(ARRAY_SIZE(args), (char **)args, &status, false,
+            true);
     if (rc) {
         errno = EIO;
         SLOGE("Filesystem check failed (unknown exit code %d)", rc);
@@ -90,6 +96,7 @@ int Ntfs::doMount(const char *fsPath, const char *mountPoint,
     int rc;
     char mountData[255];
     const char *args[6];
+    int status;
 
     /*
      * Note: This is a temporary hack. If the sampling profiler is enabled,
@@ -126,12 +133,15 @@ int Ntfs::doMount(const char *fsPath, const char *mountPoint,
     args[4] = mountPoint;
     args[5] = NULL;
 
-    rc = logwrap(5, args, 1);
+    rc = android_fork_execvp(ARRAY_SIZE(args), (char **)args, &status, false,
+            true);
 
     if (rc && errno == EROFS) {
         SLOGE("%s appears to be a read only filesystem - retrying mount RO", fsPath);
         strcat(mountData, ",ro");
-        rc = logwrap(5, args, 1);
+        rc = android_fork_execvp(ARRAY_SIZE(args), (char **)args, &status, false,
+            true);
+
     }
 
     if (rc == 0 && createLost) {
@@ -151,3 +161,39 @@ int Ntfs::doMount(const char *fsPath, const char *mountPoint,
 
     return rc;
 }
+
+int Ntfs::format(const char *fsPath, bool wipe) {
+
+    const char *args[4];
+    int rc = -1;
+    int status;
+
+    if (access(MKNTFS_PATH, X_OK)) {
+        SLOGE("Unable to format, mkntfs not found.");
+        return -1;
+    }
+
+    args[0] = MKNTFS_PATH;
+    if (wipe) {
+        args[1] = fsPath;
+        args[2] = NULL;
+    } else {
+        args[1] = "-f";
+        args[2] = fsPath;
+        args[3] = NULL;
+    }
+
+    rc = android_fork_execvp(ARRAY_SIZE(args), (char **)args, &status, false,
+            true);
+
+    if (rc == 0) {
+        SLOGI("Filesystem (NTFS) formatted OK");
+        return 0;
+    } else {
+        SLOGE("Format (NTFS) failed (unknown exit code %d)", rc);
+        errno = EIO;
+        return -1;
+    }
+    return 0;
+}
+

@@ -17,16 +17,21 @@
 #ifndef _VOLUME_H
 #define _VOLUME_H
 
+#ifdef __cplusplus
 #include <utils/List.h>
-
+#include <fs_mgr.h>
+#include <sys/types.h>
 class NetlinkEvent;
 class VolumeManager;
 
 class Volume {
 private:
     int mState;
+    int mFlags;
+    char* mOpts;
 
 public:
+#endif
     static const int State_Init       = -1;
     static const int State_NoMedia    = 0;
     static const int State_Idle       = 1;
@@ -38,19 +43,19 @@ public:
     static const int State_Shared     = 7;
     static const int State_SharedMnt  = 8;
 
-    static const char *SECDIR;
-    static const char *SEC_STGDIR;
-    static const char *SEC_STG_SECIMGDIR;
+    static const char *MEDIA_DIR;
+    static const char *FUSE_DIR;
     static const char *SEC_ASECDIR_EXT;
     static const char *SEC_ASECDIR_INT;
     static const char *ASECDIR;
-
     static const char *LOOPDIR;
-    static const char *FUSEDIR;
+    static const char *BLKID_PATH;
 
+#ifdef __cplusplus
 protected:
-    char *mLabel;
-    char *mMountpoint;
+    char* mLabel;
+    char* mUuid;
+    char* mUserLabel;
     VolumeManager *mVm;
     bool mDebug;
     int mPartIdx;
@@ -64,20 +69,25 @@ protected:
     dev_t mCurrentlyMountedKdev;
 
 public:
-    Volume(VolumeManager *vm, const char *label, const char *mount_point);
+    Volume(VolumeManager *vm, const fstab_rec* rec, int flags);
     virtual ~Volume();
 
     int mountVol();
     int unmountVol(bool force, bool revert);
-    int formatVol();
+    int formatVol(bool wipe, const char *fstype = NULL);
 
-    const char *getLabel() { return mLabel; }
-    const char *getMountpoint() { return mMountpoint; }
+    const char* getLabel() { return mLabel; }
+    const char* getUuid() { return mUuid; }
+    const char* getUserLabel() { return mUserLabel; }
     int getState() { return mState; }
-    bool isPrimaryStorage();
+    int getFlags() { return mFlags; };
 
     int getLunNumber() { return mLunNumber; }
-    void setLunNumber(int lunNumber);
+    void setLunNumber(int lunNumber) { mLunNumber = lunNumber; }
+
+    /* Mountpoint of the raw volume */
+    virtual const char *getMountpoint() = 0;
+    virtual const char *getFuseMountpoint() = 0;
 
     virtual int handleBlockEvent(NetlinkEvent *evt);
     virtual dev_t getDiskDevice();
@@ -91,25 +101,31 @@ public:
     virtual int getDeviceNodes(dev_t *devs, int max) = 0;
 
 protected:
+    void setUuid(const char* uuid);
+    void setUserLabel(const char* userLabel);
     void setState(int state);
 
     virtual int updateDeviceInfo(char *new_path, int new_major, int new_minor) = 0;
     virtual void revertDeviceInfo(void) = 0;
     virtual int isDecrypted(void) = 0;
-    virtual int getFlags(void) = 0;
 
     int createDeviceNode(const char *path, int major, int minor);
 
 private:
     int initializeMbr(const char *deviceNode);
     bool isMountpointMounted(const char *path);
-    int createBindMounts();
+    int mountAsecExternal();
     int doUnmount(const char *path, bool force);
-    int doMoveMount(const char *src, const char *dst, bool force);
     int doFuseMount(const char *src, const char *dst);
-    void protectFromAutorunStupidity();
+    int extractMetadata(const char* devicePath);
 };
 
 typedef android::List<Volume *> VolumeCollection;
 
+extern "C" {
+#endif
+    const char *stateToStr(int state);
+#ifdef __cplusplus
+};
+#endif
 #endif

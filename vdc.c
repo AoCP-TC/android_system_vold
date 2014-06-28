@@ -36,7 +36,7 @@ static void usage(char *progname);
 static int do_monitor(int sock, int stop_after_cmd);
 static int do_cmd(int sock, int argc, char **argv);
 
-int main(int argc, char **argv) {
+int vdc_main(int argc, char **argv) {
     int sock;
 
     if (argc < 2)
@@ -57,7 +57,7 @@ int main(int argc, char **argv) {
 static int do_cmd(int sock, int argc, char **argv) {
     char final_cmd[255] = "0 "; /* 0 is a (now required) sequence number */
     int i;
-    int ret;
+    size_t ret;
 
     for (i = 1; i < argc; i++) {
         char *cmp;
@@ -150,3 +150,8 @@ static void usage(char *progname) {
     exit(1);
 }
 
+#ifndef MINIVOLD
+int main(int argc, char **argv) {
+    return vdc_main(argc, argv);
+}
+#endif
